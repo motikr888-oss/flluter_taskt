@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
@@ -7,31 +6,11 @@ import 'dart:async';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeNotifications();
   runApp(const VoiceTaskApp());
 }
 
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-    FlutterLocalNotificationsPlugin();
 final FlutterTts flutterTts = FlutterTts();
 Database? taskDatabase;
-
-Future<void> initializeNotifications() async {
-  const AndroidInitializationSettings initializationSettingsAndroid =
-      AndroidInitializationSettings('app_icon');
-
-  const InitializationSettings initializationSettings =
-      InitializationSettings(android: initializationSettingsAndroid);
-
-  await flutterLocalNotificationsPlugin.initialize(
-    initializationSettings,
-    onDidReceiveNotificationResponse: onNotificationTapped,
-  );
-
-  await flutterTts.setLanguage("en-US");
-}
-
-void onNotificationTapped(NotificationResponse response) {}
 
 Future<Database> initDatabase() async {
   final String path = join(await getDatabasesPath(), 'voice_tasks.db');
@@ -44,6 +23,11 @@ Future<Database> initDatabase() async {
     },
     version: 1,
   );
+}
+
+Future<void> initializeTts() async {
+  await flutterTts.setLanguage("hi-IN");
+  await flutterTts.setSpeechRate(0.5);
 }
 
 class VoiceTaskApp extends StatelessWidget {
@@ -78,6 +62,7 @@ class _VoiceTaskHomeState extends State<VoiceTaskHome> {
 
   Future<void> _initializeApp() async {
     taskDatabase = await initDatabase();
+    await initializeTts();
     await _loadTasks();
     _startReminderTimer();
   }
@@ -93,44 +78,32 @@ class _VoiceTaskHomeState extends State<VoiceTaskHome> {
   void _startReminderTimer() {
     reminderTimer = Timer.periodic(Duration(seconds: 1), (timer) async {
       final now = DateTime.now();
+      final currentTime =
+          '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
       for (var task in tasks) {
         if (task['isDone'] == 0) {
-          final taskDate = task['date'];
-          final taskTime = task['time'];
-          final taskDateTime = DateTime.parse('$taskDate $taskTime');
+          final taskTime = task['time'].substring(0, 5);
 
-          if (now.isAfter(taskDateTime) &&
-              now.difference(taskDateTime).inSeconds < 5) {
-            _showNotificationAndSpeak(task['title']);
+          if (currentTime == taskTime) {
+            _playVoiceReminder(task['title']);
           }
         }
       }
     });
   }
 
-  Future<void> _showNotificationAndSpeak(String title) async {
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
-        AndroidNotificationDetails(
-      'voice_task_channel',
-      'Voice Task Reminders',
-      importance: Importance.max,
-      priority: Priority.high,
+  Future<void> _playVoiceReminder(String title) async {
+    String message = 'Yaad raha! $title karna hai!';
+
+    await flutterTts.speak(message);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: Duration(seconds: 10),
+      ),
     );
-
-    const NotificationDetails platformChannelSpecifics =
-        NotificationDetails(android: androidPlatformChannelSpecifics);
-
-    await flutterLocalNotificationsPlugin.show(
-      0,
-      'Task Reminder',
-      title,
-      platformChannelSpecifics,
-    );
-
-    for (int i = 0; i < 3; i++) {
-      await flutterTts.speak(title);
-      await Future.delayed(Duration(seconds: 4));
-    }
   }
 
   Future<void> _addTask(String title, String date, String time) async {
@@ -172,18 +145,20 @@ class _VoiceTaskHomeState extends State<VoiceTaskHome> {
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
-              title: const Text('Add New Task'),
+              title: const Text('Naya Task Add Karo'),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     TextField(
                       controller: titleController,
-                      decoration:
-                          const InputDecoration(hintText: 'Enter task title'),
+                      decoration: const InputDecoration(
+                        hintText: 'Task likho',
+                        border: OutlineInputBorder(),
+                      ),
                     ),
                     const SizedBox(height: 16),
-                    ElevatedButton(
+                    ElevatedButton.icon(
                       onPressed: () async {
                         final picked = await showDatePicker(
                           context: context,
@@ -195,11 +170,12 @@ class _VoiceTaskHomeState extends State<VoiceTaskHome> {
                           setState(() => selectedDate = picked);
                         }
                       },
-                      child: Text(
-                          'Date: ${selectedDate.year}-${selectedDate.month}-${selectedDate.day}'),
+                      icon: const Icon(Icons.calendar_today),
+                      label: Text(
+                          'Date: ${selectedDate.day}/${selectedDate.month}/${selectedDate.year}'),
                     ),
                     const SizedBox(height: 8),
-                    ElevatedButton(
+                    ElevatedButton.icon(
                       onPressed: () async {
                         final picked = await showTimePicker(
                           context: context,
@@ -209,7 +185,8 @@ class _VoiceTaskHomeState extends State<VoiceTaskHome> {
                           setState(() => selectedTime = picked);
                         }
                       },
-                      child: Text(
+                      icon: const Icon(Icons.access_time),
+                      label: Text(
                           'Time: ${selectedTime.hour}:${selectedTime.minute.toString().padLeft(2, '0')}'),
                     ),
                   ],
@@ -253,9 +230,19 @@ class _VoiceTaskHomeState extends State<VoiceTaskHome> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('VoiceTask'),
+        centerTitle: true,
       ),
       body: tasks.isEmpty
-          ? const Center(child: Text('No tasks. Add one to get started!'))
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.task_alt, size: 80, color: Colors.grey),
+                  const SizedBox(height: 20),
+                  const Text('Koi task nahi! Add karo!'),
+                ],
+              ),
+            )
           : ListView.builder(
               itemCount: tasks.length,
               itemBuilder: (context, index) {
@@ -270,9 +257,11 @@ class _VoiceTaskHomeState extends State<VoiceTaskHome> {
                     },
                   ),
                   title: Text(task['title']),
-                  subtitle: Text('${task['date']} at ${task['time']}'),
+                  subtitle: Text(
+                    '${task['date']} - ${task['time'].substring(0, 5)}',
+                  ),
                   trailing: IconButton(
-                    icon: const Icon(Icons.delete),
+                    icon: const Icon(Icons.delete, color: Colors.red),
                     onPressed: () => _deleteTask(task['id']),
                   ),
                 );
